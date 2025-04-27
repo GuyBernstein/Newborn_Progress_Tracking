@@ -9,8 +9,8 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.db.base import get_db
-from app.models.models import User
-from app.schemas.schemas import Token, TokenPayload, User, UserCreate
+from app.models.models import User as UserModel
+from app.schemas.schemas import Token, TokenPayload, User as UserSchema, UserCreate
 
 router = APIRouter()
 
@@ -28,15 +28,14 @@ def get_password_hash(password: str) -> str:
     return pwd_context.hash(password)
 
 
-def authenticate_user(db: Session, email: str, password: str) -> User:
+def authenticate_user(db: Session, email: str, password: str) -> UserModel:
     """Authenticate user."""
-    user = db.query(User).filter(User.email == email).first()
+    user = db.query(UserModel).filter(UserModel.email == email).first()
     if not user:
         return None
     if not verify_password(password, user.hashed_password):
         return None
     return user
-
 
 def create_access_token(data: dict, expires_delta: timedelta = None) -> str:
     """Create JWT access token."""
@@ -56,7 +55,7 @@ def create_access_token(data: dict, expires_delta: timedelta = None) -> str:
 
 async def get_current_user(
         db: Session = Depends(get_db), token: str = Depends(oauth2_scheme)
-) -> User:
+) -> UserModel:
     """Get current authenticated user from token."""
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
@@ -73,15 +72,15 @@ async def get_current_user(
         token_data = TokenPayload(sub=user_id)
     except JWTError:
         raise credentials_exception
-    user = db.query(User).filter(User.id == token_data.sub).first()
+    user = db.query(UserModel).filter(UserModel.id == token_data.sub).first()
     if user is None:
         raise credentials_exception
     return user
 
 
 async def get_current_active_user(
-        current_user: User = Depends(get_current_user),
-) -> User:
+        current_user: UserModel = Depends(get_current_user),
+) -> UserModel:
     """Check if current user is active."""
     if not current_user.is_active:
         raise HTTPException(status_code=400, detail="Inactive user")
@@ -109,13 +108,13 @@ async def login_for_access_token(
     return {"access_token": access_token, "token_type": "bearer"}
 
 
-@router.post("/register", response_model=User)
+@router.post("/register", response_model=UserSchema)
 def register_user(*, db: Session = Depends(get_db), user_in: UserCreate) -> Any:
     """
     Register a new user.
     """
     # Check if user already exists
-    user = db.query(User).filter(User.email == user_in.email).first()
+    user = db.query(UserModel).filter(UserModel.email == user_in.email).first()
     if user:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -123,7 +122,7 @@ def register_user(*, db: Session = Depends(get_db), user_in: UserCreate) -> Any:
         )
 
     # Create new user
-    db_user = User(
+    db_user = UserModel(
         email=user_in.email,
         hashed_password=get_password_hash(user_in.password),
         is_active=True,
@@ -134,8 +133,8 @@ def register_user(*, db: Session = Depends(get_db), user_in: UserCreate) -> Any:
     return db_user
 
 
-@router.get("/me", response_model=User)
-def read_users_me(current_user: User = Depends(get_current_active_user)) -> Any:
+@router.get("/me", response_model=UserSchema)
+def read_users_me(current_user: UserModel = Depends(get_current_active_user)) -> Any:
     """
     Get current user.
     """

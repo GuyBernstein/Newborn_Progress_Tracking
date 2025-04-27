@@ -9,8 +9,8 @@ BASE_URL = "http://localhost:8000/api/v1"
 
 # Sample test data
 TEST_USER = {
-    "email": "test@example.com",
-    "password": "testpassword123"
+    "email": "test2@example.com",
+    "password": "testpassword1234"
 }
 
 TEST_BABY = {
@@ -125,7 +125,7 @@ def add_progress(token, baby_id):
 
     # Add baby_id to progress data
     progress_data = TEST_PROGRESS.copy()
-    progress_data["baby_id"] = baby_id
+    progress_data["baby_id"] = [baby_id]
 
     response = requests.post(
         f"{BASE_URL}/babies/{baby_id}/progress",
