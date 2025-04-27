@@ -2,7 +2,8 @@ import os
 import secrets
 from typing import Any, Dict, List, Optional, Union
 
-from pydantic import AnyHttpUrl, BaseSettings, PostgresDsn, validator
+from pydantic import AnyHttpUrl, field_validator, model_validator
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
@@ -11,11 +12,12 @@ class Settings(BaseSettings):
     # 60 minutes * 24 hours * 8 days = 8 days
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24 * 8
     PROJECT_NAME: str = "Baby Tracker API"
+    ALGORITHM: str = "HS256"
 
     # CORS Configuration
     BACKEND_CORS_ORIGINS: List[AnyHttpUrl] = []
 
-    @validator("BACKEND_CORS_ORIGINS", pre=True)
+    @field_validator("BACKEND_CORS_ORIGINS", mode='before')
     def assemble_cors_origins(cls, v: Union[str, List[str]]) -> Union[List[str], str]:
         if isinstance(v, str) and not v.startswith("["):
             return [i.strip() for i in v.split(",")]
@@ -24,7 +26,7 @@ class Settings(BaseSettings):
         raise ValueError(v)
 
     # Database Configuration
-    DATABASE_URL: PostgresDsn
+    DATABASE_URL: str
 
     # AWS Configuration
     AWS_ACCESS_KEY_ID: str
@@ -32,9 +34,11 @@ class Settings(BaseSettings):
     AWS_REGION: str
     AWS_S3_BUCKET: str
 
-    class Config:
-        case_sensitive = True
-        env_file = ".env"
+    model_config = SettingsConfigDict(
+        case_sensitive=True,
+        env_file=".env",
+        extra="ignore"  # Ignore extra fields in environment
+    )
 
 
 settings = Settings()
