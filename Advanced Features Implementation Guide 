@@ -1,0 +1,1300 @@
+# Advanced Features Implementation Guide
+
+This guide outlines advanced features that can be implemented to enhance the Baby Tracker API, with a focus on AI-driven insights and additional functionality.
+
+## Growth Prediction Models
+
+### Implementing Growth Trajectory Forecasting
+
+Use historical data to predict future growth metrics:
+
+```python
+def predict_growth_trajectory(
+    baby_id: int,
+    db: Session,
+    prediction_months: int = 3
+) -> Dict[str, List[Dict]]:
+    """
+    Predict baby's growth trajectory for the next X months
+
+    Args:
+        baby_id: The baby's ID
+        db: Database session
+        prediction_months: Number of months to predict
+
+    Returns:
+        Dictionary with predicted weight, height, and head circumference
+    """
+    # Get baby info
+    baby = db.query(Baby).filter(Baby.id == baby_id).first()
+    if not baby:
+        return {"error": "Baby not found"}
+
+    # Get historical growth data
+    progress_records = db.query(BabyProgress).filter(
+        BabyProgress.baby_id == baby_id
+    ).order_by(BabyProgress.record_date).all()
+
+    if len(progress_records) < 2:
+        return {"error": "Not enough data for prediction"}
+
+    # Extract data points
+    dates = [record.record_date for record in progress_records]
+    weights = [record.weight for record in progress_records if record.weight is not None]
+    heights = [record.height for record in progress_records if record.height is not None]
+    head_circs = [record.head_circumference for record in progress_records if record.head_circumference is not None]
+
+    # Convert dates to days since birth for easier math
+    days_since_birth = [(d - baby.date_of_birth).days for d in dates]
+
+    # Simple linear regression for prediction
+    # In a production app, consider more sophisticated models
+    weight_pred = _linear_regression_predict(days_since_birth, weights, prediction_months)
+    height_pred = _linear_regression_predict(days_since_birth, heights, prediction_months)
+    head_circ_pred = _linear_regression_predict(days_since_birth, head_circs, prediction_months)
+
+    # Generate prediction dates
+    last_date = dates[-1]
+    future_dates = [last_date + timedelta(days=30*i) for i in range(1, prediction_months+1)]
+
+    # Format results
+    predictions = {
+        "weight": [{"date": date.isoformat(), "value": value}
+                   for date, value in zip(future_dates, weight_pred)],
+        "height": [{"date": date.isoformat(), "value": value}
+                   for date, value in zip(future_dates, height_pred)],
+        "head_circumference": [{"date": date.isoformat(), "value": value}
+                              for date, value in zip(future_dates, head_circ_pred)]
+    }
+
+    return predictions
+
+def _linear_regression_predict(x, y, prediction_months):
+    """Simple linear regression for prediction"""
+    if not x or not y or len(x) != len(y):
+        return [None] * prediction_months
+
+    # Calculate slope and intercept
+    n = len(x)
+    sum_x = sum(x)
+    sum_y = sum(y)
+    sum_xy = sum(x[i] * y[i] for i in range(n))
+    sum_xx = sum(x[i] * x[i] for i in range(n))
+
+    slope = (n * sum_xy - sum_x * sum_y) / (n * sum_xx - sum_x * sum_x)
+    intercept = (sum_y - slope * sum_x) / n
+
+    # Predict future values
+    last_x = x[-1]
+    predictions = [slope * (last_x + 30*i) + intercept for i in range(1, prediction_months+1)]
+
+    return predictions
+```
+
+## Sleep Pattern Analysis
+
+### Implementing Advanced Sleep Analytics
+
+Analyze sleep patterns to provide insights:
+
+```python
+def analyze_sleep_patterns(baby_id: int, db: Session, days: int = 30) -> Dict:
+    """
+    Analyze sleep patterns over a period of time
+
+    Args:
+        baby_id: The baby's ID
+        db: Database session
+        days: Number of days to analyze
+
+    Returns:
+        Dictionary with sleep pattern insights
+    """
+    # Get date range
+    end_date = date.today()
+    start_date = end_date - timedelta(days=days)
+
+    # Get progress records with sleep data
+    progress_records = db.query(BabyProgress).filter(
+        BabyProgress.baby_id == baby_id,
+        BabyProgress.record_date >= start_date,
+        BabyProgress.record_date <= end_date,
+        BabyProgress.sleep_schedule.is_not(None)
+    ).order_by(BabyProgress.record_date).all()
+
+    if not progress_records:
+        return {"error": "No sleep data available"}
+
+    # Extract all sleep sessions
+    sleep_sessions = []
+    for record in progress_records:
+        sessions = record.sleep_schedule
+        if isinstance(sessions, str):
+            try:
+                sessions = json.loads(sessions)
+            except:
+                continue
+
+        for session in sessions:
+            start = session.get("start_time")
+            end = session.get("end_time")
+            quality = session.get("quality", "unknown")
+
+            if not start or not end:
+                continue
+
+            if isinstance(start, str):
+                start = datetime.fromisoformat(start.replace('Z', '+00:00'))
+            if isinstance(end, str):
+                end = datetime.fromisoformat(end.replace('Z', '+00:00'))
+
+            duration = (end - start).total_seconds() / 3600  # hours
+
+            sleep_sessions.append({
+                "start": start,
+                "end": end,
+                "duration": duration,
+                "quality": quality,
+                "day_of_week": start.weekday()
+            })
+
+    if not sleep_sessions:
+        return {"error": "No valid sleep sessions found"}
+
+    # Calculate insights
+    avg_duration = sum(s["duration"] for s in sleep_sessions) / len(sleep_sessions)
+    total_sleep_per_day = {}
+
+    for session in sleep_sessions:
+        day = session["start"].date().isoformat()
+        if day in total_sleep_per_day:
+            total_sleep_per_day[day] += session["duration"]
+        else:
+            total_sleep_per_day[day] = session["duration"]
+
+    avg_sleep_per_day = sum(total_sleep_per_day.values()) / len(total_sleep_per_day)
+
+    # Analyze sleep by time of day
+    morning_sleep = sum(s["duration"] for s in sleep_sessions if 6 <= s["start"].hour < 12)
+    afternoon_sleep = sum(s["duration"] for s in sleep_sessions if 12 <= s["start"].hour < 18)
+    evening_sleep = sum(s["duration"] for s in sleep_sessions if 18 <= s["start"].hour < 22)
+    night_sleep = sum(s["duration"] for s in sleep_sessions if s["start"].hour >= 22 or s["start"].hour < 6)
+
+    total_sleep = morning_sleep + afternoon_sleep + evening_sleep + night_sleep
+
+    # Find patterns by day of week
+    sleep_by_day = [0] * 7
+    count_by_day = [0] * 7
+
+    for session in sleep_sessions:
+        day = session["day_of_week"]
+        sleep_by_day[day] += session["duration"]
+        count_by_day[day] += 1
+
+    avg_by_day = [sleep_by_day[i] / count_by_day[i] if count_by_day[i] > 0 else 0 for i in range(7)]
+
+    # Return insights
+    return {
+        "average_session_duration": round(avg_duration, 2),
+        "average_daily_sleep": round(avg_sleep_per_day, 2),
+        "sleep_distribution": {
+            "morning": round(morning_sleep / total_sleep * 100, 1),
+            "afternoon": round(afternoon_sleep / total_sleep * 100, 1),
+            "evening": round(evening_sleep / total_sleep * 100, 1),
+            "night": round(night_sleep / total_sleep * 100, 1)
+        },
+        "best_sleep_days": {
+            "Monday": round(avg_by_day[0], 2),
+            "Tuesday": round(avg_by_day[1], 2),
+            "Wednesday": round(avg_by_day[2], 2),
+            "Thursday": round(avg_by_day[3], 2),
+            "Friday": round(avg_by_day[4], 2),
+            "Saturday": round(avg_by_day[5], 2),
+            "Sunday": round(avg_by_day[6], 2)
+        },
+        "sleep_quality": {
+            "good": len([s for s in sleep_sessions if s["quality"] == "good"]),
+            "fair": len([s for s in sleep_sessions if s["quality"] == "fair"]),
+            "poor": len([s for s in sleep_sessions if s["quality"] == "poor"])
+        }
+    }
+```
+
+## Milestone Predictions
+
+### Implementing Developmental Milestone Predictions
+
+Predict when a baby might reach upcoming milestones:
+
+```python
+def predict_upcoming_milestones(baby_id: int, db: Session) -> List[Dict]:
+    """
+    Predict when a baby might reach upcoming developmental milestones
+
+    Args:
+        baby_id: The baby's ID
+        db: Database session
+
+    Returns:
+        List of upcoming milestones with predicted dates
+    """
+    # Get baby info
+    baby = db.query(Baby).filter(Baby.id == baby_id).first()
+    if not baby:
+        return [{"error": "Baby not found"}]
+
+    # Calculate baby's age in months
+    today = date.today()
+    age_months = (today.year - baby.date_of_birth.year) * 12 + today.month - baby.date_of_birth.month
+
+    # Get achieved milestones
+    progress_records = db.query(BabyProgress).filter(
+        BabyProgress.baby_id == baby_id,
+        BabyProgress.milestones.is_not(None)
+    ).all()
+
+    achieved_milestones = set()
+    for record in progress_records:
+        milestones = record.milestones
+        if isinstance(milestones, str):
+            try:
+                milestones = json.loads(milestones)
+            except:
+                continue
+
+        for milestone in milestones:
+            achieved_milestones.add(milestone["milestone"].lower())
+
+    # Standard developmental milestones by age (simplified)
+    # In a real app, this should be a comprehensive database
+    standard_milestones = {
+        2: ["social smile", "holds head up briefly", "tracks moving objects"],
+        3: ["raises head and chest when on stomach", "opens and closes hands", "grasps objects"],
+        4: ["rolls over", "laughs out loud", "reaches for objects"],
+        6: ["sits without support", "passes objects from hand to hand", "responds to own name"],
+        9: ["crawls", "stands holding on", "waves bye-bye"],
+        12: ["first steps", "says first word", "points to objects"],
+        # ... more milestones
+    }
+
+    # Find upcoming milestones based on age
+    upcoming = []
+
+    for month, milestones in sorted(standard_milestones.items()):
+        if month >= age_months:
+            for milestone in milestones:
+                # Check if milestone is already achieved
+                if not any(achieved in milestone or milestone in achieved
+                           for achieved in achieved_milestones):
+                    # Predict when baby might achieve this milestone
+                    # Simple prediction based on average development pace
+                    predicted_age = month
+
+                    # If baby has shown advanced development, adjust prediction
+                    if len(achieved_milestones) > age_months * 0.5:
+                        # Faster development pace
+                        predicted_age = max(age_months, month - 1)
+
+                    predicted_date = baby.date_of_birth + relativedelta(months=predicted_age)
+
+                    upcoming.append({
+                        "milestone": milestone,
+                        "typical_age_months": month,
+                        "predicted_date": predicted_date.isoformat(),
+                        "notes": f"Typically achieved around {month} months"
+                    })
+
+    # Limit to next 5 milestones
+    return upcoming[:5]
+```
+
+## AI-Powered Photo Analysis
+
+### Implementing Basic Emotion Recognition
+
+Analyze baby photos to detect emotions and developmental cues:
+
+```python
+def analyze_baby_photos(baby_id: int, db: Session, limit: int = 10) -> Dict:
+    """
+    Analyze baby photos to detect emotions and developmental cues
+
+    Note: This is a placeholder that describes an AI implementation.
+    In a real application, you would use a computer vision API or model.
+
+    Args:
+        baby_id: The baby's ID
+        db: Database session
+        limit: Maximum number of photos to analyze
+
+    Returns:
+        Analysis results
+    """
+    # Get recent photo media items
+    photos = db.query(MediaItem).filter(
+        MediaItem.baby_id == baby_id,
+        MediaItem.media_type == "photo"
+    ).order_by(MediaItem.upload_date.desc()).limit(limit).all()
+
+    if not photos:
+        return {"error": "No photos found"}
+
+    # In a real implementation:
+    # 1. Download photos from S3
+    # 2. Use a computer vision API (AWS Rekognition, Google Vision, etc.)
+    # 3. Process the results
+
+    # Placeholder implementation
+    results = {
+        "analyzed_photos": len(photos),
+        "emotions_detected": {
+            "happy": 7,
+            "neutral": 2,
+            "surprised": 1
+        },
+        "developmental_indicators": {
+            "eye_contact": True,
+            "smiling_response": True,
+            "object_tracking": True
+        },
+        "environment": {
+            "well_lit": True,
+            "safe_surroundings": True
+        }
+    }
+
+    return results
+```
+
+## Parenting Recommendations Engine
+
+### Implementing Personalized Recommendations
+
+Generate personalized recommendations based on baby's data:
+
+```python
+def generate_recommendations(baby_id: int, db: Session) -> List[Dict]:
+    """
+    Generate personalized recommendations based on baby's data
+
+    Args:
+        baby_id: The baby's ID
+        db: Database session
+
+    Returns:
+        List of recommendations
+    """
+    # Get baby info
+    baby = db.query(Baby).filter(Baby.id == baby_id).first()
+    if not baby:
+        return [{"error": "Baby not found"}]
+
+    # Calculate age in months
+    today = date.today()
+    age_months = (today.year - baby.date_of_birth.year) * 12 + today.month - baby.date_of_birth.month
+
+    # Get latest progress record
+    latest_progress = db.query(BabyProgress).filter(
+        BabyProgress.baby_id == baby_id
+    ).order_by(BabyProgress.record_date.desc()).first()
+
+    recommendations = []
+
+    # Age-specific recommendations
+    age_recs = _get_age_specific_recommendations(age_months)
+    recommendations.extend(age_recs)
+
+    # Growth-based recommendations
+    if latest_progress and latest_progress.growth_percentile is not None:
+        growth_recs = _get_growth_recommendations(latest_progress.growth_percentile, age_months)
+        recommendations.extend(growth_recs)
+
+    # Sleep-based recommendations
+    if latest_progress and latest_progress.sleep_quality_index is not None:
+        sleep_recs = _get_sleep_recommendations(latest_progress.sleep_quality_index, age_months)
+        recommendations.extend(sleep_recs)
+
+    # Development recommendations
+    dev_recs = _get_development_recommendations(age_months)
+    recommendations.extend(dev_recs)
+
+    # Prioritize and limit recommendations
+    sorted_recs = sorted(recommendations, key=lambda x: x["priority"], reverse=True)
+
+    return [
+        {
+            "category": rec["category"],
+            "title": rec["title"],
+            "description": rec["description"],
+            "link": rec.get("link")
+        }
+        for rec in sorted_recs[:5]  # Top 5 recommendations
+    ]
+
+def _get_age_specific_recommendations(age_months: int) -> List[Dict]:
+    """Get age-specific recommendations"""
+    # In a real app, this would come from a database
+    recommendations = {
+        0: [
+            {
+                "category": "care",
+                "title": "Newborn Care Basics",
+                "description": "Learn about feeding, sleeping, and diaper changing for your newborn.",
+                "priority": 10
+            }
+        ],
+        2: [
+            {
+                "category": "development",
+                "title": "Tummy Time",
+                "description": "Start with 2-3 tummy time sessions per day to strengthen neck muscles.",
+                "priority": 8
+            }
+        ],
+        4: [
+            {
+                "category": "nutrition",
+                "title": "Introducing Solids",
+                "description": "Consider discussing with your pediatrician when to introduce solid foods.",
+                "priority": 9,
+                "link": "https://www.healthychildren.org/English/ages-stages/baby/feeding-nutrition/Pages/Starting-Solid-Foods.aspx"
+            }
+        ],
+        # ... more age-based recommendations
+    }
+
+    # Find closest age group
+    closest_age = min(recommendations.keys(), key=lambda x: abs(x - age_months))
+
+    # Return recommendations for that age, or empty list if none
+    return recommendations.get(closest_age, [])
+
+def _get_growth_recommendations(percentile: float, age_months: int) -> List[Dict]:
+    """Get growth-based recommendations"""
+    recommendations = []
+
+    if percentile < 10:
+        recommendations.append({
+            "category": "nutrition",
+            "title": "Healthy Weight Gain",
+            "description": "Your baby's weight is on the lower side. Consider discussing with your pediatrician.",
+            "priority": 10
+        })
+    elif percentile > 90:
+        if age_months < 6:
+            recommendations.append({
+                "category": "nutrition",
+                "title": "Healthy Growth",
+                "description": "Your baby is growing well. Continue current feeding patterns.",
+                "priority": 5
+            })
+        else:
+            recommendations.append({
+                "category": "nutrition",
+                "title": "Balanced Diet",
+                "description": "Ensure a balanced diet as your baby grows.",
+                "priority": 6
+            })
+    else:
+        recommendations.append({
+            "category": "nutrition",
+            "title": "Healthy Growth",
+            "description": "Your baby is growing at a healthy rate.",
+            "priority": 3
+        })
+
+    return recommendations
+
+def _get_sleep_recommendations(sleep_index: float, age_months: int) -> List[Dict]:
+    """Get sleep-based recommendations"""
+    recommendations = []
+
+    if sleep_index < 50:
+        recommendations.append({
+            "category": "sleep",
+            "title": "Improving Sleep Quality",
+            "description": "Try establishing a consistent bedtime routine to improve sleep quality.",
+            "priority": 9
+        })
+    elif sleep_index < 70:
+        recommendations.append({
+            "category": "sleep",
+            "title": "Sleep Environment",
+            "description": "Ensure a quiet, dark sleeping environment for better sleep.",
+            "priority": 7
+        })
+    else:
+        recommendations.append({
+            "category": "sleep",
+            "title": "Maintaining Good Sleep",
+            "description": "Your baby is sleeping well. Maintain your current routine.",
+            "priority": 4
+        })
+
+    return recommendations
+
+def _get_development_recommendations(age_months: int) -> List[Dict]:
+    """Get development recommendations"""
+    # Age-appropriate activities
+    activities = {
+        0: [
+            {
+                "category": "development",
+                "title": "Visual Stimulation",
+                "description": "Use high-contrast black and white patterns to stimulate visual development.",
+                "priority": 7
+            }
+        ],
+        2: [
+            {
+                "category": "development",
+                "title": "Talking and Singing",
+                "description": "Talk and sing to your baby to promote language development.",
+                "priority": 6
+            }
+        ],
+        4: [
+            {
+                "category": "development",
+                "title": "Interactive Play",
+                "description": "Introduce interactive games like peekaboo to develop social skills.",
+                "priority": 6
+            }
+        ],
+        # ... more activities
+    }
+
+    closest_age = min(activities.keys(), key=lambda x: abs(x - age_months))
+    return activities.get(closest_age, [])
+```
+
+## Real-time Notifications
+
+### Implementing Push Notifications
+
+Set up a system for sending real-time notifications:
+
+```python
+# In a production app, you would use a service like Firebase Cloud Messaging,
+# AWS SNS, or a WebSocket-based solution for real-time notifications.
+
+from fastapi import BackgroundTasks
+from app.core.config import settings
+import requests
+
+class NotificationService:
+    def __init__(self):
+        self.base_url = settings.NOTIFICATION_SERVICE_URL
+        self.api_key = settings.NOTIFICATION_SERVICE_API_KEY
+
+    def send_notification(
+        self,
+        user_id: int,
+        title: str,
+        message: str,
+        data: Dict = None
+    ) -> bool:
+        """
+        Send a push notification to a user
+
+        Args:
+            user_id: User ID
+            title: Notification title
+            message: Notification message
+            data: Additional data payload
+
+        Returns:
+            Success status
+        """
+        try:
+            payload = {
+                "user_id": user_id,
+                "title": title,
+                "message": message,
+                "data": data or {}
+            }
+
+            headers = {
+                "Authorization": f"Bearer {self.api_key}",
+                "Content-Type": "application/json"
+            }
+
+            response = requests.post(
+                f"{self.base_url}/send",
+                json=payload,
+                headers=headers
+            )
+
+            return response.status_code == 200
+
+        except Exception as e:
+            logger.error(f"Failed to send notification: {str(e)}")
+            return False
+
+    def send_milestone_reminder(
+        self,
+        background_tasks: BackgroundTasks,
+        user_id: int,
+        baby_name: str,
+        milestone: str,
+        predicted_date: str
+    ) -> None:
+        """
+        Send a milestone reminder notification
+
+        Args:
+            background_tasks: FastAPI background tasks
+            user_id: User ID
+            baby_name: Baby's name
+            milestone: Milestone description
+            predicted_date: Predicted achievement date
+        """
+        title = f"Upcoming Milestone for {baby_name}"
+        message = f"{baby_name} may reach the milestone '{milestone}' around {predicted_date}!"
+
+        background_tasks.add_task(
+            self.send_notification,
+            user_id=user_id,
+            title=title,
+            message=message,
+            data={"type": "milestone", "milestone": milestone}
+        )
+
+# Initialize service
+notification_service = NotificationService()
+
+# Example usage in an API endpoint
+@router.post("/{baby_id}/schedule-reminders")
+async def schedule_milestone_reminders(
+    *,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+    baby_id: int,
+    background_tasks: BackgroundTasks
+) -> Dict:
+    """Schedule milestone reminders for a baby"""
+    # Check baby ownership
+    baby = check_baby_ownership(db, baby_id, current_user)
+
+    # Get upcoming milestones
+    milestones = predict_upcoming_milestones(baby_id, db)
+
+    # Schedule notifications for each milestone
+    for milestone in milestones:
+        notification_service.send_milestone_reminder(
+            background_tasks=background_tasks,
+            user_id=current_user.id,
+            baby_name=baby.name,
+            milestone=milestone["milestone"],
+            predicted_date=milestone["predicted_date"]
+        )
+
+    return {
+        "message": f"Scheduled reminders for {len(milestones)} upcoming milestones",
+        "milestones": milestones
+    }
+```
+
+## Multi-Baby Comparison
+
+### Implementing Sibling Comparison Analytics
+
+For parents with multiple babies, provide comparison insights:
+
+```python
+def compare_siblings(
+    parent_id: int,
+    db: Session,
+    metric: str = "growth"
+) -> Dict:
+    """
+    Compare growth or development between siblings
+
+    Args:
+        parent_id: Parent user ID
+        db: Database session
+        metric: Comparison metric ('growth', 'sleep', 'development')
+
+    Returns:
+        Comparison data
+    """
+    # Get all babies for this parent
+    babies = db.query(Baby).filter(Baby.parent_id == parent_id).all()
+
+    if len(babies) < 2:
+        return {"error": "Need at least two babies to compare"}
+
+    results = {"babies": []}
+
+    for baby in babies:
+        # Get progress data
+        progress_records = db.query(BabyProgress).filter(
+            BabyProgress.baby_id == baby.id
+        ).order_by(BabyProgress.record_date).all()
+
+        if not progress_records:
+            continue
+
+        baby_data = {
+            "id": baby.id,
+            "name": baby.name,
+            "birth_date": baby.date_of_birth.isoformat(),
+            "data_points": []
+        }
+
+        for record in progress_records:
+            # Calculate age in months at this record
+            age_months = calculate_age_in_months(baby.date_of_birth, record.record_date)
+
+            data_point = {
+                "age_months": age_months,
+                "record_date": record.record_date.isoformat()
+            }
+
+            # Add metric-specific data
+            if metric == "growth":
+                data_point.update({
+                    "weight": record.weight,
+                    "height": record.height,
+                    "head_circumference": record.head_circumference,
+                    "percentile": record.growth_percentile
+                })
+            elif metric == "sleep":
+                data_point.update({
+                    "sleep_quality": record.sleep_quality_index,
+                    "sleep_hours": record.total_sleep_hours
+                })
+            elif metric == "development":
+                data_point.update({
+                    "development_score": record.developmental_score
+                })
+
+            baby_data["data_points"].append(data_point)
+
+        results["babies"].append(baby_data)
+
+    # Add comparative analysis
+    if metric == "growth" and len(results["babies"]) >= 2:
+        results["comparison"] = _compare_growth_patterns(results["babies"])
+    elif metric == "sleep" and len(results["babies"]) >= 2:
+        results["comparison"] = _compare_sleep_patterns(results["babies"])
+    elif metric == "development" and len(results["babies"]) >= 2:
+        results["comparison"] = _compare_development(results["babies"])
+
+    return results
+
+def _compare_growth_patterns(babies_data: List[Dict]) -> Dict:
+    """Compare growth patterns between siblings"""
+    comparison = {
+        "weight_rate": {},
+        "height_rate": {},
+        "similarities": [],
+        "differences": []
+    }
+
+    for baby in babies_data:
+        name = baby["name"]
+        data_points = baby["data_points"]
+
+        if len(data_points) < 2:
+            continue
+
+        # Calculate growth rates
+        first_point = data_points[0]
+        last_point = data_points[-1]
+        months_diff = last_point["age_months"] - first_point["age_months"]
+
+        if months_diff <= 0:
+            continue
+
+        # Weight growth (g/month)
+        if first_point.get("weight") and last_point.get("weight"):
+            weight_gain = (last_point["weight"] - first_point["weight"]) * 1000  # Convert to grams
+            weight_rate = weight_gain / months_diff
+            comparison["weight_rate"][name] = round(weight_rate, 0)
+
+        # Height growth (cm/month)
+        if first_point.get("height") and last_point.get("height"):
+            height_gain = last_point["height"] - first_point["height"]
+            height_rate = height_gain / months_diff
+            comparison["height_rate"][name] = round(height_rate, 1)
+
+    # Find similarities and differences
+    if len(comparison["weight_rate"]) >= 2:
+        rates = list(comparison["weight_rate"].values())
+        mean_rate = sum(rates) / len(rates)
+        variation = max(rates) - min(rates)
+
+        if variation < mean_rate * 0.2:
+            comparison["similarities"].append("Similar weight gain rates")
+        else:
+            comparison["differences"].append("Different weight gain patterns")
+
+    if len(comparison["height_rate"]) >= 2:
+        rates = list(comparison["height_rate"].values())
+        mean_rate = sum(rates) / len(rates)
+        variation = max(rates) - min(rates)
+
+        if variation < mean_rate * 0.2:
+            comparison["similarities"].append("Similar height gain rates")
+        else:
+            comparison["differences"].append("Different height gain patterns")
+
+    return comparison
+
+def _compare_sleep_patterns(babies_data: List[Dict]) -> Dict:
+    """Compare sleep patterns between siblings"""
+    # Implementation similar to growth comparison, focused on sleep metrics
+    # ...
+    return {
+        "average_sleep_quality": {},
+        "sleep_pattern_similarity": "moderate"
+    }
+
+def _compare_development(babies_data: List[Dict]) -> Dict:
+    """Compare developmental patterns between siblings"""
+    # Implementation similar to growth comparison, focused on developmental metrics
+    # ...
+    return {
+        "developmental_pace": {},
+        "notable_differences": []
+    }
+```
+
+## Integration with IoT Devices
+
+### Implementing IoT Device Integration
+
+Connect with baby monitoring devices for automatic data collection:
+
+```python
+from fastapi import APIRouter, Depends, HTTPException, Request, status
+from pydantic import BaseModel
+
+# Define schemas for IoT data
+class SmartScaleData(BaseModel):
+    device_id: str
+    baby_id: int
+    weight: float
+    timestamp: datetime
+    battery_level: Optional[float] = None
+
+class SmartMonitorData(BaseModel):
+    device_id: str
+    baby_id: int
+    temperature: Optional[float] = None
+    humidity: Optional[float] = None
+    noise_level: Optional[float] = None
+    sleep_data: Optional[Dict] = None
+    timestamp: datetime
+
+# Create router for IoT devices
+iot_router = APIRouter()
+
+@iot_router.post("/smart-scale", status_code=status.HTTP_202_ACCEPTED)
+async def receive_smart_scale_data(
+    data: SmartScaleData,
+    db: Session = Depends(get_db),
+    api_key: str = Header(None)
+):
+    """Receive weight data from smart baby scale"""
+    # Validate API key
+    if api_key != settings.IOT_API_KEY:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid API key"
+        )
+
+    # Verify baby exists
+    baby = db.query(Baby).filter(Baby.id == data.baby_id).first()
+    if not baby:
+        return {"error": "Baby not found"}
+
+    # Get or create progress record for this date
+    record_date = data.timestamp.date()
+    progress = db.query(BabyProgress).filter(
+        BabyProgress.baby_id == data.baby_id,
+        BabyProgress.record_date == record_date
+    ).first()
+
+    if progress:
+        # Update existing record
+        progress.weight = data.weight
+        # Recalculate growth percentile
+        progress = process_baby_progress(db, progress, baby)
+    else:
+        # Create new record
+        progress = BabyProgress(
+            baby_id=data.baby_id,
+            record_date=record_date,
+            weight=data.weight
+        )
+        # Calculate insights
+        progress = process_baby_progress(db, progress, baby)
+
+    db.add(progress)
+    db.commit()
+
+    return {"message": "Data received successfully"}
+
+@iot_router.post("/smart-monitor", status_code=status.HTTP_202_ACCEPTED)
+async def receive_smart_monitor_data(
+    data: SmartMonitorData,
+    db: Session = Depends(get_db),
+    api_key: str = Header(None)
+):
+    """Receive data from smart baby monitor"""
+    # Validate API key
+    if api_key != settings.IOT_API_KEY:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid API key"
+        )
+
+    # Process sleep data if available
+    if data.sleep_data:
+        # Process sleep data and update baby's sleep records
+        # ...
+        pass
+
+    # Store environmental data
+    # This could be stored in a separate table for environmental monitoring
+    # ...
+
+    return {"message": "Monitor data received successfully"}
+
+# Include this router in the main API
+api_router.include_router(iot_router, prefix="/iot", tags=["iot"])
+```
+
+## Data Export and Sharing
+
+### Implementing Data Export API
+
+Allow parents to export and share their baby's data:
+
+```python
+@router.get("/{baby_id}/export", response_model=Dict)
+async def export_baby_data(
+    *,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+    baby_id: int,
+    format: str = Query("json", description="Export format: 'json', 'csv'"),
+    include_media: bool = Query(False, description="Include media URLs in export")
+) -> Any:
+    """
+    Export baby data in various formats
+    """
+    # Check baby ownership
+    baby = check_baby_ownership(db, baby_id, current_user)
+
+    # Get all progress records
+    progress_records = db.query(BabyProgress).filter(
+        BabyProgress.baby_id == baby_id
+    ).order_by(BabyProgress.record_date).all()
+
+    # Get media items if requested
+    media_items = []
+    if include_media:
+        media_items = db.query(MediaItem).filter(
+            MediaItem.baby_id == baby_id
+        ).order_by(MediaItem.upload_date).all()
+
+        # Refresh S3 URLs with longer expiration
+        for item in media_items:
+            item.s3_url = s3_service.generate_presigned_url(item.s3_key, expiration=86400)  # 24 hours
+
+    # Prepare data for export
+    export_data = {
+        "baby": {
+            "id": baby.id,
+            "name": baby.name,
+            "date_of_birth": baby.date_of_birth.isoformat(),
+            "gender": baby.gender,
+            "export_date": datetime.now().isoformat()
+        },
+        "progress": [
+            {
+                "record_date": record.record_date.isoformat(),
+                "weight": record.weight,
+                "height": record.height,
+                "head_circumference": record.head_circumference,
+                "feeding_times": record.feeding_times,
+                "feeding_type": record.feeding_type,
+                "feeding_amount": record.feeding_amount,
+                "sleep_schedule": record.sleep_schedule,
+                "total_sleep_hours": record.total_sleep_hours,
+                "diaper_changes": record.diaper_changes,
+                "milestones": record.milestones,
+                "notes": record.notes,
+                "growth_percentile": record.growth_percentile,
+                "sleep_quality_index": record.sleep_quality_index,
+                "feeding_efficiency": record.feeding_efficiency,
+                "developmental_score": record.developmental_score
+            }
+            for record in progress_records
+        ]
+    }
+
+    if include_media:
+        export_data["media"] = [
+            {
+                "id": item.id,
+                "media_type": item.media_type,
+                "filename": item.filename,
+                "upload_date": item.upload_date.isoformat(),
+                "notes": item.notes,
+                "tags": item.tags,
+                "url": item.s3_url
+            }
+            for item in media_items
+        ]
+
+    # Generate response based on requested format
+    if format.lower() == "json":
+        return export_data
+    elif format.lower() == "csv":
+        # Convert to CSV
+        import csv
+        import io
+
+        output = io.StringIO()
+        writer = csv.writer(output)
+
+        # Write headers
+        writer.writerow([
+            "record_date", "weight", "height", "head_circumference",
+            "total_sleep_hours", "feeding_type", "feeding_amount",
+            "growth_percentile", "sleep_quality_index", "feeding_efficiency",
+            "developmental_score", "notes"
+        ])
+
+        # Write data
+        for record in progress_records:
+            writer.writerow([
+                record.record_date.isoformat(),
+                record.weight,
+                record.height,
+                record.head_circumference,
+                record.total_sleep_hours,
+                record.feeding_type,
+                record.feeding_amount,
+                record.growth_percentile,
+                record.sleep_quality_index,
+                record.feeding_efficiency,
+                record.developmental_score,
+                record.notes
+            ])
+
+        csv_content = output.getvalue()
+
+        # Return CSV as a downloadable file
+        from fastapi.responses import PlainTextResponse
+        return PlainTextResponse(
+            content=csv_content,
+            media_type="text/csv",
+            headers={
+                "Content-Disposition": f'attachment; filename="{baby.name}_data.csv"'
+            }
+        )
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Unsupported export format"
+        )
+```
+
+## Health Professional Sharing
+
+### Implementing Secure Data Sharing with Healthcare Providers
+
+Enable secure sharing with pediatricians and other healthcare providers:
+
+```python
+from datetime import datetime, timedelta
+from typing import List, Optional
+
+class HealthShareToken(Base):
+    __tablename__ = "health_share_tokens"
+
+    id = Column(Integer, primary_key=True, index=True)
+    baby_id = Column(Integer, ForeignKey("babies.id"), nullable=False)
+    token = Column(String, index=True, nullable=False)
+    provider_email = Column(String, nullable=True)
+    expires_at = Column(DateTime, nullable=False)
+    access_count = Column(Integer, default=0)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    # Relationship
+    baby = relationship("Baby", backref="share_tokens")
+
+@router.post("/{baby_id}/share-with-healthcare", response_model=Dict)
+async def create_healthcare_share_link(
+    *,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+    baby_id: int,
+    provider_email: Optional[str] = None,
+    expires_days: int = Query(7, ge=1, le=30)
+) -> Any:
+    """
+    Create a secure link to share baby data with healthcare providers
+    """
+    # Check baby ownership
+    baby = check_baby_ownership(db, baby_id, current_user)
+
+    # Generate a secure token
+    import secrets
+    token = secrets.token_urlsafe(32)
+
+    # Set expiration date
+    expires_at = datetime.utcnow() + timedelta(days=expires_days)
+
+    # Create token record
+    share_token = HealthShareToken(
+        baby_id=baby_id,
+        token=token,
+        provider_email=provider_email,
+        expires_at=expires_at
+    )
+
+    db.add(share_token)
+    db.commit()
+    db.refresh(share_token)
+
+    # Generate share URL
+    share_url = f"{settings.API_BASE_URL}/api/v1/healthcare/shared/{token}"
+
+    return {
+        "share_url": share_url,
+        "expires_at": expires_at.isoformat(),
+        "provider_email": provider_email
+    }
+
+@router.get("/shared/{token}")
+async def access_shared_baby_data(
+    *,
+    db: Session = Depends(get_db),
+    token: str
+) -> Any:
+    """
+    Access shared baby data using a token (for healthcare providers)
+    """
+    # Find token
+    share_token = db.query(HealthShareToken).filter(
+        HealthShareToken.token == token,
+        HealthShareToken.expires_at > datetime.utcnow()
+    ).first()
+
+    if not share_token:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Invalid or expired share link"
+        )
+
+    # Update access count
+    share_token.access_count += 1
+    db.add(share_token)
+    db.commit()
+
+    # Get baby data
+    baby = db.query(Baby).filter(Baby.id == share_token.baby_id).first()
+    if not baby:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Baby data not found"
+        )
+
+    # Get progress records for the last 6 months
+    six_months_ago = datetime.now().date() - timedelta(days=180)
+    progress_records = db.query(BabyProgress).filter(
+        BabyProgress.baby_id == baby.id,
+        BabyProgress.record_date >= six_months_ago
+    ).order_by(BabyProgress.record_date).all()
+
+    # Calculate age
+    today = date.today()
+    age_days = (today - baby.date_of_birth).days
+    age_months = age_days // 30
+    age_years = age_days // 365
+
+    if age_years > 0:
+        age_display = f"{age_years} year{'s' if age_years != 1 else ''}"
+        if age_months % 12 > 0:
+            age_display += f", {age_months % 12} month{'s' if age_months % 12 != 1 else ''}"
+    else:
+        age_display = f"{age_months} month{'s' if age_months != 1 else ''}"
+        if age_days % 30 > 0:
+            age_display += f", {age_days % 30} day{'s' if age_days % 30 != 1 else ''}"
+
+    # Format data for healthcare providers
+    health_data = {
+        "baby": {
+            "name": baby.name,
+            "date_of_birth": baby.date_of_birth.isoformat(),
+            "gender": baby.gender,
+            "age": age_display
+        },
+        "growth": {
+            "weight": {
+                "current": progress_records[-1].weight if progress_records else None,
+                "history": [
+                    {"date": record.record_date.isoformat(), "value": record.weight, "percentile": record.growth_percentile}
+                    for record in progress_records if record.weight is not None
+                ]
+            },
+            "height": {
+                "current": progress_records[-1].height if progress_records else None,
+                "history": [
+                    {"date": record.record_date.isoformat(), "value": record.height}
+                    for record in progress_records if record.height is not None
+                ]
+            },
+            "head_circumference": {
+                "current": progress_records[-1].head_circumference if progress_records else None,
+                "history": [
+                    {"date": record.record_date.isoformat(), "value": record.head_circumference}
+                    for record in progress_records if record.head_circumference is not None
+                ]
+            }
+        },
+        "feeding": {
+            "current_type": progress_records[-1].feeding_type if progress_records else None,
+            "notes": [
+                {"date": record.record_date.isoformat(), "type": record.feeding_type, "amount": record.feeding_amount}
+                for record in progress_records if record.feeding_type is not None
+            ]
+        },
+        "sleep": {
+            "average_hours": sum(r.total_sleep_hours or 0 for r in progress_records if r.total_sleep_hours) /
+                         len([r for r in progress_records if r.total_sleep_hours]) if any(r.total_sleep_hours for r in progress_records) else None,
+            "quality_index": progress_records[-1].sleep_quality_index if progress_records else None
+        },
+        "development": {
+            "milestones": [],
+            "developmental_score": progress_records[-1].developmental_score if progress_records else None
+        }
+    }
+
+    # Extract milestone data
+    for record in progress_records:
+        if record.milestones:
+            milestones = record.milestones
+            if isinstance(milestones, str):
+                try:
+                    milestones = json.loads(milestones)
+                except:
+                    continue
+
+            for milestone in milestones:
+                health_data["development"]["milestones"].append({
+                    "milestone": milestone.get("milestone"),
+                    "achieved_date": milestone.get("achieved_date"),
+                    "notes": milestone.get("notes")
+                })
+
+    return health_data
+```
+
+These advanced features significantly enhance the capabilities of the Baby Tracker API, providing valuable insights and functionality for parents and healthcare providers.

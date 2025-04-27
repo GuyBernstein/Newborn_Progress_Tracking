@@ -1,0 +1,184 @@
+# Security Guidelines for Baby Tracker API
+
+Security is especially important for applications handling sensitive information like baby development data and images. This document outlines key security considerations for the Baby Tracker API.
+
+## Data Protection
+
+### Personal Information Security
+
+1. **Data Encryption**
+   - All data is encrypted in transit using HTTPS
+   - Sensitive database fields can be encrypted at rest
+   - S3 objects are encrypted by default
+
+2. **Access Control**
+   - JWT-based authentication with proper expiration
+   - Role-based access control for multiuser scenarios
+   - Parents can only access their own baby data
+
+3. **Data Minimization**
+   - Collect only necessary information
+   - Implement data retention policies
+   - Allow users to delete their data
+
+## Media Security
+
+### S3 Media Protection
+
+1. **Secure URLs**
+   - Pre-signed URLs with short expiration times
+   - No public access to S3 bucket
+
+2. **Media Access Controls**
+   - Media items linked to specific baby/user records
+   - Authorization checks before generating URLs
+
+3. **Upload Security**
+   - Content type validation
+   - File size limitations
+   - Virus/malware scanning before storage
+
+## API Security
+
+1. **Input Validation**
+   - Pydantic schemas validate all inputs
+   - Additional validation for file uploads
+   - Protection against common injection attacks
+
+2. **Rate Limiting**
+   - Implement API rate limiting to prevent abuse
+   - Consider using a service like AWS WAF
+
+3. **CORS Configuration**
+   - Limit cross-origin requests to trusted domains
+   - Proper CORS headers in responses
+
+## Authentication and Authorization
+
+1. **Password Security**
+   - Proper password hashing with bcrypt
+   - Password strength requirements
+   - Account lockout after failed attempts
+
+2. **Token Management**
+   - Short-lived JWT tokens
+   - Secure token storage guidelines for clients
+   - Implement token refresh mechanism
+
+3. **Authorization Checks**
+   - Verify user permissions for every request
+   - Parent-baby relationship validation
+
+## Infrastructure Security
+
+1. **Database Security**
+   - Limited network access to database
+   - Strong, unique passwords
+   - Regular security patches
+
+2. **AWS Security**
+   - Use IAM roles with least privilege
+   - Enable CloudTrail for S3 access logging
+   - Regular security assessments
+
+3. **Dependency Management**
+   - Regular dependency updates
+   - Vulnerability scanning (pip-audit)
+   - Remove unused dependencies
+
+## Implementation Guidelines
+
+### Code Level Security
+
+```python
+# Example: Secure password hashing
+from passlib.context import CryptContext
+
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+def get_password_hash(password: str) -> str:
+    return pwd_context.hash(password)
+
+def verify_password(plain_password: str, hashed_password: str) -> bool:
+    return pwd_context.verify(plain_password, hashed_password)
+```
+
+```python
+# Example: Proper authorization check
+@router.get("/{baby_id}", response_model=BabySchema)
+def get_baby(
+    *,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+    baby_id: int,
+) -> Any:
+    """Get a specific baby by ID."""
+    baby = db.query(Baby).filter(Baby.id == baby_id, Baby.parent_id == current_user.id).first()
+    if not baby:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Baby not found",
+        )
+    return baby
+```
+
+### S3 Security Implementation
+
+```python
+# Example: Secure S3 URL generation with short expiration
+def generate_presigned_url(self, s3_key: str, expiration: int = 900) -> str:
+    """Generate a pre-signed URL valid for 15 minutes"""
+    try:
+        url = self.s3_client.generate_presigned_url(
+            'get_object',
+            Params={
+                'Bucket': self.bucket_name,
+                'Key': s3_key
+            },
+            ExpiresIn=expiration
+        )
+        return url
+    except ClientError as e:
+        logger.error(f"Error generating pre-signed URL: {e}")
+        return ""
+```
+
+## Security Testing
+
+1. **Regular Security Audits**
+   - Perform periodic code reviews focused on security
+   - Automated security scanning tools integration
+
+2. **Penetration Testing**
+   - Conduct regular penetration testing
+   - API security testing with tools like OWASP ZAP
+
+3. **Monitoring and Alerts**
+   - Set up monitoring for unusual access patterns
+   - Create alerts for potential security incidents
+
+## Incident Response
+
+1. **Plan Development**
+   - Create a security incident response plan
+   - Define roles and responsibilities
+
+2. **Communication**
+   - Establish communication protocols for breaches
+   - Prepare templates for user notifications
+
+3. **Recovery Procedures**
+   - Document steps for system recovery
+   - Regular backups and restore testing
+
+## Compliance Considerations
+
+1. **Data Privacy Regulations**
+   - Consider GDPR, CCPA, HIPAA as applicable
+   - Implement necessary consent mechanisms
+   - Data portability capabilities
+
+2. **Documentation**
+   - Maintain privacy policy documentation
+   - Document security measures and compliance efforts
+   - Keep records of security incidents and responses

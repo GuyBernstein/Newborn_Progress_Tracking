@@ -1,0 +1,182 @@
+# Deployment Instructions
+
+This guide will help you deploy the Baby Tracker API to a production environment.
+
+## Prerequisites
+
+- Docker and Docker Compose installed
+- AWS account with S3 access
+- Domain name (optional but recommended for production)
+
+## Deployment Options
+
+### 1. Docker Deployment (Recommended)
+
+The easiest way to deploy the application is using Docker and Docker Compose.
+
+1. **Configure environment variables**
+
+   Create a `.env` file in the project root with the following variables:
+
+   ```
+   # AWS Configuration
+   AWS_ACCESS_KEY_ID=your_access_key
+   AWS_SECRET_ACCESS_KEY=your_secret_key
+   AWS_REGION=us-east-1
+   AWS_S3_BUCKET=your-baby-tracker-bucket
+
+   # Security
+   SECRET_KEY=your_secure_random_string_for_jwt
+   ```
+
+2. **Build and run with Docker Compose**
+
+   ```bash
+   docker-compose up -d
+   ```
+
+   This will start both the API service and the PostgreSQL database.
+
+3. **Check logs**
+
+   ```bash
+   docker-compose logs -f web
+   ```
+
+### 2. Manual Deployment
+
+If you prefer to deploy without Docker:
+
+1. **Set up a PostgreSQL database**
+
+   Install and configure PostgreSQL on your server or use a managed database service.
+
+2. **Set up Python environment**
+
+   ```bash
+   python -m venv venv
+   source venv/bin/activate  # On Windows: venv\Scripts\activate
+   pip install -r requirements.txt
+   ```
+
+3. **Configure environment variables**
+
+   Set environment variables on your server or update the `.env` file.
+
+4. **Run database migrations**
+
+   ```bash
+   alembic upgrade head
+   ```
+
+5. **Start the application with Gunicorn**
+
+   ```bash
+   gunicorn app.main:app --workers 4 --worker-class uvicorn.workers.UvicornWorker --bind 0.0.0.0:8000
+   ```
+
+### 3. Cloud Deployment
+
+#### AWS Elastic Beanstalk
+
+1. Install the EB CLI
+2. Initialize EB application: `eb init`
+3. Create EB environment: `eb create`
+4. Deploy: `eb deploy`
+
+#### Heroku
+
+1. Create a `Procfile` in the project root:
+   ```
+   web: gunicorn app.main:app --workers 4 --worker-class uvicorn.workers.UvicornWorker
+   ```
+2. Deploy to Heroku:
+   ```bash
+   heroku create
+   git push heroku main
+   ```
+
+## HTTPS Configuration
+
+For production, always use HTTPS:
+
+1. **With Nginx (recommended)**
+
+   Set up Nginx as a reverse proxy with Let's Encrypt for SSL certificates.
+
+   Example Nginx configuration:
+
+   ```nginx
+   server {
+       listen 80;
+       server_name your-domain.com;
+       return 301 https://$host$request_uri;
+   }
+
+   server {
+       listen 443 ssl;
+       server_name your-domain.com;
+
+       ssl_certificate /path/to/cert.pem;
+       ssl_certificate_key /path/to/key.pem;
+
+       location / {
+           proxy_pass http://localhost:8000;
+           proxy_set_header Host $host;
+           proxy_set_header X-Real-IP $remote_addr;
+       }
+   }
+   ```
+
+2. **With Traefik and Docker**
+
+   Traefik can automatically provision SSL certificates when used with Docker.
+   Update the docker-compose.yml file to include Traefik configuration.
+
+## Database Backups
+
+Set up regular database backups:
+
+1. **Manual backup**:
+   ```bash
+   docker-compose exec db pg_dump -U postgres baby_tracker > backup.sql
+   ```
+
+2. **Automated backup script**:
+   Create a cron job to run backups regularly and upload them to S3.
+
+## Monitoring
+
+1. **Set up monitoring with Prometheus and Grafana**:
+   - Add a Prometheus endpoint to the FastAPI app
+   - Configure Grafana dashboards for system metrics
+
+2. **Log aggregation**:
+   - Use ELK stack (Elasticsearch, Logstash, Kibana) or
+   - Cloud solutions like AWS CloudWatch, Datadog, or Sentry
+
+## Security Considerations
+
+1. **Keep secrets secure**:
+   - Never commit `.env` file to version control
+   - Use environment variables or secrets management service
+
+2. **Regular updates**:
+   - Keep dependencies updated: `pip-audit`
+   - Schedule regular security reviews
+
+3. **API security**:
+   - Rate limiting
+   - Input validation
+   - CORS configuration
+
+## Scaling Considerations
+
+1. **Database scaling**:
+   - Consider read replicas for high-traffic situations
+   - Implement connection pooling
+
+2. **Application scaling**:
+   - Increase number of Gunicorn workers
+   - Use load balancing with multiple instances
+   - Consider serverless deployment for automatic scaling

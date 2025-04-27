@@ -24,7 +24,7 @@ TEST_PROGRESS = {
     "weight": 5.2,  # kg
     "height": 57.5,  # cm
     "head_circumference": 38.2,  # cm
-    "feeding_times": json.dumps([
+    "feeding_times": [  # Remove json.dumps()
         {
             "start_time": (datetime.now() - timedelta(hours=4)).isoformat(),
             "end_time": (datetime.now() - timedelta(hours=4) + timedelta(minutes=20)).isoformat(),
@@ -38,9 +38,9 @@ TEST_PROGRESS = {
             "amount": 80,
             "notes": "Formula"
         }
-    ]),
+    ],
     "feeding_type": "mixed",
-    "sleep_schedule": json.dumps([
+    "sleep_schedule": [  # Remove json.dumps()
         {
             "start_time": (datetime.now() - timedelta(hours=8)).isoformat(),
             "end_time": (datetime.now() - timedelta(hours=6)).isoformat(),
@@ -53,9 +53,9 @@ TEST_PROGRESS = {
             "quality": "fair",
             "notes": "Short nap"
         }
-    ]),
+    ],
     "total_sleep_hours": 3.0,
-    "diaper_changes": json.dumps([
+    "diaper_changes": [  # Remove json.dumps()
         {
             "time": (datetime.now() - timedelta(hours=7)).isoformat(),
             "type": "wet",
@@ -66,14 +66,14 @@ TEST_PROGRESS = {
             "type": "both",
             "notes": "Normal"
         }
-    ]),
-    "milestones": json.dumps([
+    ],
+    "milestones": [  # Remove json.dumps()
         {
             "milestone": "Smiles responsively",
             "achieved_date": (date.today() - timedelta(days=10)).isoformat(),
             "notes": "First social smile!"
         }
-    ]),
+    ],
     "notes": "Good day overall."
 }
 
@@ -125,7 +125,7 @@ def add_progress(token, baby_id):
 
     # Add baby_id to progress data
     progress_data = TEST_PROGRESS.copy()
-    progress_data["baby_id"] = [baby_id]
+    progress_data["baby_id"] = baby_id
 
     response = requests.post(
         f"{BASE_URL}/babies/{baby_id}/progress",
@@ -135,7 +135,6 @@ def add_progress(token, baby_id):
     print(f"Status: {response.status_code}")
     print(f"Response: {json.dumps(response.json(), indent=2)}")
     return response.json()
-
 
 def get_insights(token, baby_id):
     """Get insights for the baby."""
